@@ -2,6 +2,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import path from 'path';
 import fs from 'fs';
+import sharp from 'sharp';
 
 const __dirname = path.resolve();
 const app = express();
@@ -26,7 +27,7 @@ app.post('/uploads/:image', bodyParser.raw({
     });
     fd.end(req.body);
     fd.on('close', () => {
-        res.send({status: 'ok', size: req.body.length});
+        res.send({ status: 'ok', size: req.body.length });
     });
 });
 
@@ -38,16 +39,55 @@ app.head('/uploads/:image', (req, res) => {
     );
 });
 
-app.get('/uploads/:image', (req, res) => {
-    const fd = fs.createReadStream(req.localpath);
-
-    fd.on('error', (e) => {
-        res.status(e.code === 'ENOENT' ? 404 : 500).end();
-    });
-    res.setHeader('Content-Type', 'image/' + path.extname(req.image).substr(1));
-    fd.pipe(res);
-});
+app.get('/uploads/:image', downloadImage);
 
 app.listen(3000, () => {
     console.log('ready');
 });
+
+function downloadImage(req, res) {
+    fs.access(req.localpath, fs.constants.R_OK, (err) => {
+        if (err) {
+            return res.status(404).end();
+        }
+
+        const queryParams = req.query;
+        const width = +queryParams.width;
+        const height = +queryParams.height;
+        const blur = +queryParams.blur;
+        const sharpen = +queryParams.sharpen;
+        const greyscale = queryParams.greyscale === 'y';
+        const flip = queryParams.flip === 'y';
+        const flop = queryParams.flop === 'y';
+        const image = sharp(req.localpath);
+
+        if (width > 0 || height > 0) {
+            image.resize(width || null, height || null);
+        }
+
+        if (blur > 0) {
+            image.blur(blur);
+        }
+
+        if (sharpen > 0) {
+            image.sharpen(sharpen);
+        }
+
+        if (flip) {
+            image.flip();
+        }
+
+        if (flop) {
+            image.flop();
+        }
+
+        if (greyscale) {
+            image.greyscale();
+        }
+
+        res.setHeader('Content-Type', 'image/' +
+            path.extname(req.image).substr(1));
+
+        image.pipe(res);
+    });
+}
