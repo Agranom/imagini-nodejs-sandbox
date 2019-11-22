@@ -3,46 +3,74 @@ import bodyParser from 'body-parser';
 import path from 'path';
 import fs from 'fs';
 import sharp from 'sharp';
+import mysql from 'mysql';
+import config from './config';
 
-const __dirname = path.resolve();
 const app = express();
+const db = mysql.createConnection(config.db);
 
-app.param('image', (req, res, next, image) => {
-    if (!image.match(/\.(png|jpg)$/i)) {
-        return res.status(req.method === 'POST' ? 403 : 404).end();
+db.connect(err => {
+    if (err) {
+        throw err;
     }
-    req.image = image;
-    req.localpath = path.join(__dirname, 'uploads', req.image);
-    return next();
-});
 
-app.post('/uploads/:image', bodyParser.raw({
-    limit: '10mb',
-    type: 'image/*'
-}), (req, res) => {
-
-    const fd = fs.createWriteStream(req.localpath, {
-        flags: 'w+',
-        encoding: 'binary'
-    });
-    fd.end(req.body);
-    fd.on('close', () => {
-        res.send({ status: 'ok', size: req.body.length });
-    });
-});
-
-app.head('/uploads/:image', (req, res) => {
-    fs.access(
-        req.localpath,
-        fs.constants.R_OK,
-        (err) => res.status(err ? 404 : 200).end()
+    db.query(
+        `CREATE TABLE IF NOT EXISTS images
+	(
+			id           INT(11)      UNSIGNED NOT NULL AUTO_INCREMENT,
+			date_created TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			date_used    TIMESTAMP    NULL DEFAULT NULL,
+			name         VARCHAR(300) NOT NULL,
+			size         INT(11)      UNSIGNED NOT NULL,
+			data         LONGBLOB     NOT NULL,
+		PRIMARY KEY (id),
+		UNIQUE KEY name (name)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8`
     );
-});
 
-app.get('/uploads/:image', downloadImage);
+    app.param('image', (req, res, next, image) => {
+        if (!image.match(/\.(png|jpg)$/i)) {
+            return res.status(req.method === 'POST' ? 403 : 404).end();
+        }
+        db.query('SELECT * FROM images WHERE name = ?', [image], (err, images) => {
+            if (err || !images.length) {
+                return res.status(404).end();
 
-app.listen(3000, () => {
-    console.log('ready');
+            }
+            req.image = images[0];
+            return next();
+        });
+
+    });
+
+    app.post('/uploads/:image', bodyParser.raw({
+        limit: '10mb',
+        type: 'image/*'
+    }), (req, res) => {
+        db.query('INSERT INTO images SET ?', {
+            name: req.image.name,
+            size: req.body.length,
+            data: req.body,
+        }, (err) => {
+            if (err) {
+                return res.send({ status: 'error', code: err.code });
+            }
+            res.send({ status: 'ok', size: req.body.length });
+
+        });
+    });
+
+    app.head('/uploads/:image', (req, res) => {
+        return res.status(200).end()
+    });
+
+    app.get('/uploads/:image', downloadImage);
+
+
+    app.listen(5000, () => {
+        console.log('ready');
+    });
+
 });
 
 function downloadImage(req, res) {
